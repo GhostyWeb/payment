@@ -140,10 +140,10 @@ export async function cancelSaleListing(
   const sellerTokenAccount = getAssociatedTokenAddressSync(mintPk, seller, false, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID)
 
   // Use skipPreflight to force transaction through despite simulation error
-  // The smart contract successfully returns tokens but fails on account closure
-  // Since tokens are returned first, the listing becomes inactive
+  // CRITICAL BUG: Smart contract returns tokens but does NOT set isActive=false
+  // We must manually track cancelled listings in localStorage as workaround
   try {
-    return await program.methods.cancelSaleListing()
+    const result = await program.methods.cancelSaleListing()
       .accounts({
         saleListing: saleListingPda,
         listingVault: listingVaultPda,
@@ -156,6 +156,10 @@ export async function cancelSaleListing(
         systemProgram: SystemProgram.programId,
       })
       .rpc({ skipPreflight: true })
+    
+    // Mark as cancelled in localStorage
+    markListingAsCancelled(saleListingPda.toBase58())
+    return result
   } catch (error: any) {
     // Check if this is the known account close error
     const errorStr = JSON.stringify(error)
@@ -164,9 +168,38 @@ export async function cancelSaleListing(
         (error.logs && error.logs.some((log: string) => log.includes('Listing cancelled')))) {
       // Tokens were returned successfully before the error
       console.log('[v0] Listing cancelled - tokens returned despite account close error')
+      // Mark as cancelled in localStorage
+      markListingAsCancelled(saleListingPda.toBase58())
       return 'success_with_error' // Signal partial success
     }
     throw error
+  }
+}
+
+// Workaround for smart contract bug: track cancelled listings in localStorage
+function markListingAsCancelled(listingPubkey: string) {
+  try {
+    const key = 'cancelled_listings'
+    const existing = localStorage.getItem(key)
+    const cancelled = existing ? JSON.parse(existing) : []
+    if (!cancelled.includes(listingPubkey)) {
+      cancelled.push(listingPubkey)
+      localStorage.setItem(key, JSON.stringify(cancelled))
+      console.log('[v0] Marked listing as cancelled:', listingPubkey)
+    }
+  } catch (e) {
+    console.error('Failed to mark listing as cancelled:', e)
+  }
+}
+
+function isListingCancelled(listingPubkey: string): boolean {
+  try {
+    const key = 'cancelled_listings'
+    const existing = localStorage.getItem(key)
+    const cancelled = existing ? JSON.parse(existing) : []
+    return cancelled.includes(listingPubkey)
+  } catch (e) {
+    return false
   }
 }
 
@@ -339,6 +372,11 @@ export async function fetchAllUserListings(wallet: any) {
       const accountInfo = await connection.getAccountInfo(saleListingPda)
       
       if (accountInfo) {
+        // Skip if manually marked as cancelled
+        if (isListingCancelled(saleListingPda.toBase58())) {
+          continue
+        }
+        
         try {
           const listingAccount = await (program.account as any).saleListing.fetch(saleListingPda)
           // Only add active listings
@@ -379,8 +417,8 @@ export async function fetchAllUserListings(wallet: any) {
             // isActive: bool (1 byte)
             const isActive = accountInfo.data[offset] === 1
             
-            // Only add active listings
-            if (isActive) {
+            // Only add active listings (and not manually cancelled)
+            if (isActive && !isListingCancelled(saleListingPda.toBase58())) {
               const manuallyDecoded = {
                 seller: new PublicKey(sellerBytes),
                 property: new PublicKey(propertyBytes),
