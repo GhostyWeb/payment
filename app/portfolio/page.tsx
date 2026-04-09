@@ -768,10 +768,16 @@ export default function PortfolioPage() {
                       }
                       
                       setCancelConfirmModal(null)
-                      // Wait for blockchain to process, then refresh
+                      
+                      // Immediately filter out the cancelled listing from UI
+                      setActiveListings(prev => prev.filter(l => 
+                        l.account.tokenMint.toBase58() !== property.tokenMint
+                      ))
+                      
+                      // Wait longer for blockchain to finalize, then refresh
                       setTimeout(async () => {
                         await refreshListings()
-                      }, 3000)
+                      }, 5000)
                     }
                   } catch (e: any) {
                     console.error('[v0] Cancel listing error:', e)
