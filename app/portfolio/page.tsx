@@ -755,35 +755,33 @@ export default function PortfolioPage() {
                   const property = cancelConfirmModal.property
                   try {
                     if (property) {
-                      const result = await cancelSaleListing(wallet, property.id)
+                      await cancelSaleListing(wallet, property.id)
                       
-                      if (result === 'success_with_error') {
-                        toast.success('Listing cancelled!', {
-                          description: 'Your tokens have been returned. Note: Due to a smart contract limitation, the listing account remains on-chain but is now inactive.'
-                        })
-                      } else {
-                        toast.success('Listing cancelled!', {
-                          description: 'Your tokens have been returned to your wallet'
-                        })
-                      }
+                      toast.success('Listing cancelled!', {
+                        description: 'Your tokens have been returned to your wallet'
+                      })
                       
                       setCancelConfirmModal(null)
                       
-                      // Immediately filter out the cancelled listing from UI
-                      setActiveListings(prev => prev.filter(l => 
-                        l.account.tokenMint.toBase58() !== property.tokenMint
-                      ))
-                      
-                      // Wait longer for blockchain to finalize, then refresh
+                      // Wait for blockchain to finalize, then refresh
                       setTimeout(async () => {
                         await refreshListings()
-                      }, 5000)
+                      }, 3000)
                     }
                   } catch (e: any) {
                     console.error('[v0] Cancel listing error:', e)
-                    toast.error('Failed to cancel listing', {
-                      description: e.message || 'Please try again'
-                    })
+                    const errorMsg = e.message || e.toString()
+                    
+                    // Show clear error message about smart contract bug
+                    if (errorMsg.includes('instruction spent from the balance')) {
+                      toast.error('Cannot Cancel Listing', {
+                        description: 'The smart contract has a critical bug preventing cancellation. You need to deploy the fixed contract from solana-program/FIXED_CONTRACT.rs to enable this feature.'
+                      })
+                    } else {
+                      toast.error('Failed to cancel listing', {
+                        description: errorMsg
+                      })
+                    }
                   }
                 }}
                 className="flex-1 px-4 py-3 rounded-xl text-sm font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all border border-red-500/30"
